@@ -40,46 +40,44 @@ async def main():
             print(f"\n次の{RECORD_SECONDS}秒間の音声を準備します...")
             recorder.start()
 
-            for recognize_duration in range(1, RECORD_SECONDS + 1):
+            for _ in range(1, RECORD_SECONDS + 1):
                 await asyncio.sleep(RECOGNIZE_INTERVAL)
 
                 ogg_audio_data_bytes = await asyncio.to_thread(
                     get_recent_ogg_bytes, recorder, RECORD_SECONDS
                 )
 
-                if ogg_audio_data_bytes:
-                    try:
-                        print(
-                            f"ogg形式データ（{len(ogg_audio_data_bytes)} bytes）を使ってShazamで楽曲を認識します..."
-                        )
-                        out = await shazam.recognize(ogg_audio_data_bytes)
-                        print("Shazam 認識結果:")
+                if not ogg_audio_data_bytes:
+                    continue
 
-                        with open("shazam_result.json", "w", encoding="utf-8") as f:
-                            json.dump(out, f, ensure_ascii=False, indent=4)
-                        print("認識結果を shazam_result.json に保存しました。")
-
-                        if out.get("track"):
-                            title = out["track"].get("title", "タイトル不明")
-                            subtitle = out["track"].get("subtitle", "サブタイトル不明")
-                            print()
-                            print(f"楽曲: {title} / アーティスト: {subtitle}")
-                            print()
-                            break  # 認識成功したらループを抜ける
-                        else:
-                            print("楽曲情報が見つかりませんでした。")
-                            if out.get("matches"):
-                                print(
-                                    "類似候補が見つかりましたが、確定的な楽曲情報はありません。"
-                                )
-                            pprint(out)
-
-                    except Exception as e:
-                        print(f"Shazam でのエラー: {e}")
-                else:
+                try:
                     print(
-                        "WAVからogg形式への変換に失敗しました。Shazam認識をスキップします。"
+                        f"ogg形式データ（{len(ogg_audio_data_bytes)} bytes）を使ってShazamで楽曲を認識します..."
                     )
+                    out = await shazam.recognize(ogg_audio_data_bytes)
+                    print("Shazam 認識結果:")
+
+                    with open("shazam_result.json", "w", encoding="utf-8") as f:
+                        json.dump(out, f, ensure_ascii=False, indent=4)
+                    print("認識結果を shazam_result.json に保存しました。")
+
+                    if out.get("track"):
+                        title = out["track"].get("title", "タイトル不明")
+                        subtitle = out["track"].get("subtitle", "サブタイトル不明")
+                        print()
+                        print(f"楽曲: {title} / アーティスト: {subtitle}")
+                        print()
+                        break  # 認識成功したらループを抜ける
+                    else:
+                        print("楽曲情報が見つかりませんでした。")
+                        if out.get("matches"):
+                            print(
+                                "類似候補が見つかりましたが、確定的な楽曲情報はありません。"
+                            )
+                        pprint(out)
+
+                except Exception as e:
+                    print(f"Shazam でのエラー: {e}")
 
             recorder.stop()
 
