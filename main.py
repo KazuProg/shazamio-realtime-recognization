@@ -1,13 +1,12 @@
 import asyncio
-import json
 import os
 from pprint import pprint
 
 import pyaudio
 from shazamio import Shazam
 
-from audio_recorder import AudioRecorder
 from audio_converter import convert_pcm_to_wav_bytes, convert_wav_to_ogg_bytes
+from audio_recorder import AudioRecorder
 
 # --- 設定項目 ---
 FORMAT = pyaudio.paInt16
@@ -57,9 +56,6 @@ async def main():
 
                 try:
                     out = await shazam.recognize(ogg_audio_data_bytes)
-
-                    with open("shazam_result.json", "w", encoding="utf-8") as f:
-                        json.dump(out, f, ensure_ascii=False, indent=4)
 
                     if out.get("track"):
                         title = out["track"].get("title", "タイトル不明")
