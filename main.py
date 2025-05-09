@@ -17,7 +17,6 @@ CHUNK = 1024
 RECORD_SECONDS = 5
 RECORDER_BUFFER_SECONDS = 10
 # ----------------
-MAX_RECORD_SECONDS = 5  # 最大録音時間（秒）
 RECOGNIZE_INTERVAL = 1  # 認識間隔（秒）
 
 
