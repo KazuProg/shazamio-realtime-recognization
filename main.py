@@ -30,8 +30,6 @@ async def main():
     recorder.start()
 
     shazam = Shazam()
-    debug_output_dir = "debug_audio"
-    os.makedirs(debug_output_dir, exist_ok=True)
 
     try:
         while True:
