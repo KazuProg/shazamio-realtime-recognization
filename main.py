@@ -14,10 +14,9 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
 CHUNK = 1024
-RECORD_SECONDS = 5
-RECORDER_BUFFER_SECONDS = 10
+RECOGNIZE_SECONDS = 5
+RECOGNIZE_INTERVAL = 1
 # ----------------
-RECOGNIZE_INTERVAL = 1  # 認識間隔（秒）
 
 
 async def main():
@@ -26,7 +25,7 @@ async def main():
         channels=CHANNELS,
         rate=RATE,
         chunk_size=CHUNK,
-        buffer_seconds=RECORDER_BUFFER_SECONDS,
+        buffer_seconds=RECOGNIZE_SECONDS,
     )
 
     shazam = Shazam()
@@ -36,14 +35,14 @@ async def main():
             print("音声認識を開始します。録音を開始するにはEnterキーを押してください。")
             input()
 
-            print(f"\n次の{RECORD_SECONDS}秒間の音声を準備します...")
+            print(f"\n次の{RECOGNIZE_SECONDS}秒間の音声を準備します...")
             recorder.start()
 
-            for _ in range(1, RECORD_SECONDS + 1):
+            for _ in range(1, RECOGNIZE_SECONDS):
                 await asyncio.sleep(RECOGNIZE_INTERVAL)
 
                 ogg_audio_data_bytes = await asyncio.to_thread(
-                    get_recent_ogg_bytes, recorder, RECORD_SECONDS
+                    get_recent_ogg_bytes, recorder, RECOGNIZE_SECONDS
                 )
 
                 if not ogg_audio_data_bytes:
