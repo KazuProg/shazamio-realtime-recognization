@@ -113,6 +113,13 @@ class AudioRecorder:
                 print("警告: 録音スレッドが正常に終了しませんでした。")
         print("録音を停止しました。")
 
+    def get_recorded_duration(self) -> float:
+        """
+        録音された音声データの総時間を秒単位で取得します。
+        """
+        with self._lock:
+            return len(self.audio_buffer) * self.chunk_size / self.rate
+
     def get_recent_audio_bytes(self, duration_seconds: int) -> bytes:
         """
         指定された秒数分の最新の音声データをバイト列として取得します。

@@ -25,7 +25,7 @@ async def main():
         channels=CHANNELS,
         rate=RATE,
         chunk_size=CHUNK,
-        buffer_seconds=RECOGNIZE_SECONDS,
+        buffer_seconds=RECOGNIZE_SECONDS + 1,  # 無限ループ対策
     )
 
     shazam = Shazam()
@@ -38,8 +38,15 @@ async def main():
             print(f"\n次の{RECOGNIZE_SECONDS}秒間の音声を準備します...")
             recorder.start()
 
-            for _ in range(1, RECOGNIZE_SECONDS):
-                await asyncio.sleep(RECOGNIZE_INTERVAL)
+            next_recognize_time = 2
+
+            while True:
+                recorded_time = recorder.get_recorded_duration()
+                if recorded_time < next_recognize_time:
+                    await asyncio.sleep(RECOGNIZE_INTERVAL * 0.1)
+                    continue
+
+                next_recognize_time += RECOGNIZE_INTERVAL
 
                 ogg_audio_data_bytes = await asyncio.to_thread(
                     get_recent_ogg_bytes, recorder, RECOGNIZE_SECONDS
@@ -76,6 +83,10 @@ async def main():
 
                 except Exception as e:
                     print(f"Shazam でのエラー: {e}")
+
+                if RECOGNIZE_SECONDS < recorded_time:
+                    print("指定した時間内に楽曲が認識できませんでした。")
+                    break
 
             recorder.stop()
 
