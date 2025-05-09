@@ -50,6 +50,7 @@ class AudioRecorder:
         if self._audio_interface:
             self._audio_interface.terminate()
             self._audio_interface = None
+        self.audio_buffer.clear()
 
     def _record_loop(self):
         """
