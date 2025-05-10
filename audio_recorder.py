@@ -2,7 +2,13 @@ import collections
 import pyaudio
 import threading
 import time
+import logging
 from typing import Deque, Optional, List
+
+from logger_config import setup_logger, log_exception
+
+# このモジュール用のロガーを設定
+logger = setup_logger(logger_name="audio_recorder", log_level=logging.INFO)
 
 
 class AudioRecorder:
@@ -47,6 +53,10 @@ class AudioRecorder:
         self._stream_error_count: int = 0
         self._max_stream_errors: int = 5  # 連続エラー発生の最大許容回数
 
+        logger.debug(
+            f"AudioRecorder初期化完了: rate={rate}Hz, channels={channels}, buffer={buffer_seconds}秒"
+        )
+
     def _open_stream(self) -> bool:
         """
         音声入力ストリームを開きます。
@@ -63,19 +73,18 @@ class AudioRecorder:
                 input=True,
                 frames_per_buffer=self.chunk_size,
             )
+            logger.debug("音声入力ストリームを開きました")
             return True
         except pyaudio.PyAudioError as e:
-            print(f"音声ストリームの初期化に失敗しました: {e}")
+            log_exception(e, "音声ストリームの初期化に失敗しました")
             self._close_stream()  # すでに作成されたリソースをクリーンアップ
             return False
         except OSError as e:
-            print(f"オーディオデバイスへのアクセス中にOSエラーが発生しました: {e}")
+            log_exception(e, "オーディオデバイスへのアクセス中にOSエラーが発生しました")
             self._close_stream()
             return False
         except Exception as e:
-            print(
-                f"音声ストリームのオープン中に予期せぬエラーが発生しました: {type(e).__name__} - {e}"
-            )
+            log_exception(e, "音声ストリームのオープン中に予期せぬエラーが発生しました")
             self._close_stream()
             return False
 
@@ -88,26 +97,32 @@ class AudioRecorder:
                 try:
                     self._audio_stream.stop_stream()
                     self._audio_stream.close()
+                    logger.debug("音声ストリームを閉じました")
                 except Exception as e:
-                    print(f"音声ストリームの終了中にエラーが発生しました: {e}")
+                    log_exception(e, "音声ストリームの終了中にエラーが発生しました")
                 finally:
                     self._audio_stream = None
 
             if self._audio_interface:
                 try:
                     self._audio_interface.terminate()
+                    logger.debug("PyAudioインターフェースを終了しました")
                 except Exception as e:
-                    print(f"PyAudioインターフェースの終了中にエラーが発生しました: {e}")
+                    log_exception(
+                        e, "PyAudioインターフェースの終了中にエラーが発生しました"
+                    )
                 finally:
                     self._audio_interface = None
 
             with self._lock:
+                buffer_size = len(self.audio_buffer)
                 self.audio_buffer.clear()
+                logger.debug(
+                    f"音声バッファをクリアしました（{buffer_size}チャンクを削除）"
+                )
 
         except Exception as e:
-            print(
-                f"ストリームのクローズ中に予期せぬエラーが発生しました: {type(e).__name__} - {e}"
-            )
+            log_exception(e, "ストリームのクローズ中に予期せぬエラーが発生しました")
 
     def _reset_stream(self) -> bool:
         """
@@ -116,21 +131,27 @@ class AudioRecorder:
         Returns:
             bool: ストリームのリセットに成功した場合はTrue、失敗した場合はFalse
         """
+        logger.info("音声ストリームのリセットを試みています...")
         self._close_stream()
         time.sleep(0.5)  # リソース解放のための短い待機
-        return self._open_stream()
+        result = self._open_stream()
+        if result:
+            logger.info("音声ストリームのリセットに成功しました")
+        else:
+            logger.error("音声ストリームのリセットに失敗しました")
+        return result
 
     def _record_loop(self) -> None:
         """
         音声データを継続的に読み込み、バッファに格納するループ。
         """
         if not self._open_stream():
-            print("録音ストリームの初期化に失敗したため、録音を中止します。")
+            logger.error("録音ストリームの初期化に失敗したため、録音を中止します。")
             self._is_recording = False
             return
 
         self._stream_error_count = 0
-        print("録音スレッド開始。")
+        logger.info("録音スレッド開始。")
 
         try:
             while self._is_recording:
@@ -138,7 +159,7 @@ class AudioRecorder:
                     # ストリームが有効かチェック
                     if not self._audio_stream or not self._audio_interface:
                         if not self._reset_stream():
-                            print(
+                            logger.error(
                                 "ストリームの再初期化に失敗しました。録音を停止します。"
                             )
                             break
@@ -157,19 +178,19 @@ class AudioRecorder:
                     self._stream_error_count += 1
 
                     if e.errno == pyaudio.paInputOverflowed:
-                        print(
-                            "警告: マイク入力バッファがオーバーフローしました。一部の音声データが失われた可能性があります。"
+                        logger.warning(
+                            "マイク入力バッファがオーバーフローしました。一部の音声データが失われた可能性があります。"
                         )
                     else:
-                        print(f"録音ループ中にIOエラーが発生しました: {e}")
+                        log_exception(e, "録音ループ中にIOエラーが発生しました")
 
                     # 連続エラーが閾値を超えたら処理
                     if self._stream_error_count > self._max_stream_errors:
-                        print(
+                        logger.warning(
                             f"連続で{self._max_stream_errors}回以上のエラーが発生したため、ストリームをリセットします。"
                         )
                         if not self._reset_stream():
-                            print(
+                            logger.error(
                                 "ストリームのリセットに失敗しました。録音を停止します。"
                             )
                             break
@@ -178,23 +199,21 @@ class AudioRecorder:
                         time.sleep(0.1)
 
                 except Exception as e:
-                    print(
-                        f"録音ループ中に予期せぬエラーが発生しました: {type(e).__name__} - {e}"
-                    )
+                    log_exception(e, "録音ループ中に予期せぬエラーが発生しました")
                     self._stream_error_count += 1
 
                     if self._stream_error_count > self._max_stream_errors:
-                        print("複数回エラーが発生したため、録音を停止します。")
+                        logger.error("複数回エラーが発生したため、録音を停止します。")
                         break
 
                     # 深刻でないエラーの場合は待機して再試行
                     time.sleep(0.2)
 
         except Exception as e:
-            print(f"録音ループの実行中に予期せぬエラー: {type(e).__name__} - {e}")
+            log_exception(e, "録音ループの実行中に予期せぬエラー")
         finally:
             self._close_stream()
-            print("録音スレッド終了。")
+            logger.info("録音スレッド終了。")
 
     def start(self) -> bool:
         """
@@ -204,14 +223,14 @@ class AudioRecorder:
             bool: 録音の開始に成功した場合はTrue、すでに録音中だった場合はFalse
         """
         if self._is_recording:
-            print("既に録音中です。")
+            logger.info("既に録音中です。")
             return False
 
         self._is_recording = True
         self._recording_thread = threading.Thread(target=self._record_loop)
         self._recording_thread.daemon = True  # メインスレッド終了時に自動終了
         self._recording_thread.start()
-        print("録音を開始しました。")
+        logger.info("録音を開始しました。")
         return True
 
     def stop(self) -> None:
@@ -219,9 +238,10 @@ class AudioRecorder:
         録音を停止します。録音スレッドを終了し、音声ストリームを閉じます。
         """
         if not self._is_recording:
-            print("録音は開始されていません。")
+            logger.info("録音は開始されていません。")
             return
 
+        logger.info("録音を停止しています...")
         self._is_recording = False
 
         # スレッドの終了を待機
@@ -229,13 +249,13 @@ class AudioRecorder:
             try:
                 self._recording_thread.join(timeout=5)  # タイムアウト付きで終了を待つ
                 if self._recording_thread.is_alive():
-                    print("警告: 録音スレッドが正常に終了しませんでした。")
+                    logger.warning("録音スレッドが正常に終了しませんでした。")
             except Exception as e:
-                print(f"録音スレッド終了待機中にエラー: {e}")
+                log_exception(e, "録音スレッド終了待機中にエラー")
 
         # 明示的にストリームを閉じる
         self._close_stream()
-        print("録音を停止しました。")
+        logger.info("録音を停止しました。")
 
     def get_recorded_duration(self) -> float:
         """
@@ -259,11 +279,11 @@ class AudioRecorder:
             bytes: 指定された秒数分の最新の音声データ
         """
         if duration_seconds <= 0:
-            print("警告: 要求された音声データの長さが0秒以下です。")
+            logger.warning("要求された音声データの長さが0秒以下です。")
             return b""
 
         if not self._is_recording and not self.audio_buffer:
-            print("録音データがありません。")
+            logger.warning("録音データがありません。")
             return b""
 
         try:
@@ -274,14 +294,20 @@ class AudioRecorder:
                 current_buffer_list: List[bytes] = list(self.audio_buffer)
 
             if not current_buffer_list:
+                logger.warning("音声バッファが空です。")
                 return b""
 
             # 必要なチャンク数、またはバッファにある全チャンク数のうち少ない方
             chunks_to_retrieve: List[bytes] = current_buffer_list[
                 -min(num_chunks_to_get, len(current_buffer_list)) :
             ]
+            result_size = len(b"".join(chunks_to_retrieve))
+            actual_duration = len(chunks_to_retrieve) * self.chunk_size / self.rate
+            logger.debug(
+                f"要求: {duration_seconds}秒、取得: {actual_duration:.2f}秒の音声データ（{result_size}バイト）"
+            )
             return b"".join(chunks_to_retrieve)
 
         except Exception as e:
-            print(f"音声データの取得中にエラーが発生しました: {type(e).__name__} - {e}")
+            log_exception(e, "音声データの取得中にエラーが発生しました")
             return b""

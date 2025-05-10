@@ -1,9 +1,15 @@
 import wave
 import io
+import logging
 from typing import Optional
 
 from pydub import AudioSegment
 from pydub.exceptions import CouldntDecodeError
+
+from logger_config import setup_logger, log_exception
+
+# このモジュール用のロガーを設定
+logger = setup_logger(logger_name="audio_converter", log_level=logging.INFO)
 
 """
 音声フォーマット変換ユーティリティモジュール。
@@ -27,6 +33,7 @@ def convert_pcm_to_wav_bytes(
         Optional[bytes]: WAVフォーマットに変換されたバイト列データ。変換失敗時はNone
     """
     if not pcm_data:
+        logger.warning("変換対象のPCMデータが空です")
         return None
 
     wav_buffer: io.BytesIO = io.BytesIO()
@@ -36,20 +43,21 @@ def convert_pcm_to_wav_bytes(
             wf.setsampwidth(sample_width)
             wf.setframerate(rate)
             wf.writeframes(pcm_data)
+        logger.debug(
+            f"PCMからWAVへの変換成功: サイズ={len(wav_buffer.getvalue())}バイト"
+        )
         return wav_buffer.getvalue()
     except wave.Error as e:
-        print(f"WAVフォーマットへの変換中にエラー発生: {e}")
+        log_exception(e, "WAVフォーマットへの変換中にエラー発生")
         return None
     except OSError as e:
-        print(f"WAVファイル書き込み中にI/Oエラー発生: {e}")
+        log_exception(e, "WAVファイル書き込み中にI/Oエラー発生")
         return None
     except ValueError as e:
-        print(f"不正なパラメータ - PCMからWAVへの変換中にエラー: {e}")
+        log_exception(e, "不正なパラメータ - PCMからWAVへの変換中にエラー")
         return None
     except Exception as e:
-        print(
-            f"PCMからWAVへの変換中に予期せぬエラーが発生しました: {type(e).__name__} - {e}"
-        )
+        log_exception(e, "PCMからWAVへの変換中に予期せぬエラーが発生しました")
         return None
     finally:
         wav_buffer.close()
@@ -70,6 +78,7 @@ def convert_wav_to_ogg_bytes(
         Optional[bytes]: OGG形式に変換されたバイト列データ。変換失敗時はNone
     """
     if not wav_data:
+        logger.warning("変換対象のWAVデータが空です")
         return None
 
     ogg_buffer: io.BytesIO = io.BytesIO()
@@ -80,15 +89,18 @@ def convert_wav_to_ogg_bytes(
         try:
             audio_segment: AudioSegment = AudioSegment.from_wav(wav_io)
             audio_segment.export(ogg_buffer, format="ogg")
+            logger.debug(
+                f"WAVからOGGへの変換成功: サイズ={len(ogg_buffer.getvalue())}バイト"
+            )
             return ogg_buffer.getvalue()
         except CouldntDecodeError as e:
-            print(f"WAVデータのデコードエラー: {e}")
+            log_exception(e, "WAVデータのデコードエラー")
             return None
         except OSError as e:
-            print(f"OGGエクスポート中にI/Oエラー発生: {e}")
+            log_exception(e, "OGGエクスポート中にI/Oエラー発生")
             return None
         except Exception as e:
-            print(f"WAVからOGGへの変換中に予期せぬエラー: {type(e).__name__} - {e}")
+            log_exception(e, "WAVからOGGへの変換中に予期せぬエラー")
             return None
     finally:
         if wav_io:
