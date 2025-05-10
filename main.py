@@ -17,6 +17,9 @@ def recognition_callback(result):
 
 
 async def main():
+    """
+    メイン実行関数です。ユーザー入力に基づいて楽曲認識を繰り返し実行します。
+    """
     recognizer = ShazamRealtimeRecognizer(
         recognition_callback=recognition_callback,
         stop_on_found=True,
@@ -32,7 +35,12 @@ async def main():
 
 
 def clear_console():
-    """コンソールをクリアします。"""
+    """
+    コンソールをクリアします。OSに応じて適切なコマンドを実行します。
+
+    Returns:
+        None
+    """
     os_name = os.name
     if os_name == "posix":  # macOS, Linux, Unix系
         os.system("clear")

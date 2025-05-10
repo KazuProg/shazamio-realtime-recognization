@@ -3,11 +3,27 @@ import io
 
 from pydub import AudioSegment
 
+"""
+音声フォーマット変換ユーティリティモジュール。
+様々な音声フォーマット間の変換機能を提供します。
+"""
+
 
 def convert_pcm_to_wav_bytes(
     pcm_data: bytes, channels: int, rate: int, sample_width: int
 ) -> bytes:
-    """生のPCM音声データ（バイト列）をWAVフォーマットのバイト列（ヘッダ付き）に変換します。"""
+    """
+    生のPCM音声データ（バイト列）をWAVフォーマットのバイト列（ヘッダ付き）に変換します。
+
+    Args:
+        pcm_data: 変換するPCM音声データ
+        channels: チャンネル数（1:モノラル、2:ステレオ）
+        rate: サンプリングレート（Hz）
+        sample_width: サンプルあたりのバイト数
+
+    Returns:
+        bytes: WAVフォーマットに変換されたバイト列データ。変換失敗時は空のバイト列
+    """
     if not pcm_data:
         return b""
     wav_buffer = io.BytesIO()
@@ -26,7 +42,17 @@ def convert_pcm_to_wav_bytes(
 
 
 def convert_wav_to_ogg_bytes(wav_data: bytes, sample_rate: int, channels: int) -> bytes:
-    """WAV形式のバイト列をogg形式のバイト列に変換します。"""
+    """
+    WAV形式のバイト列をogg形式のバイト列に変換します。
+
+    Args:
+        wav_data: 変換するWAV音声データ
+        sample_rate: サンプリングレート（Hz）
+        channels: チャンネル数
+
+    Returns:
+        bytes: OGG形式に変換されたバイト列データ。変換失敗時は空のバイト列
+    """
     if not wav_data:
         return b""
     ogg_buffer = io.BytesIO()
