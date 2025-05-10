@@ -66,32 +66,34 @@ async def main() -> int:
                 logger.info("楽曲認識が完了しました")
 
             except KeyboardInterrupt:
-                logger.info("キーボード割り込みにより認識処理をキャンセルしました")
-                print("\n認識処理をキャンセルしました。")  # ユーザーへの表示として残す
                 if recognizer and recognizer._is_recognizing:
                     recognizer.stop_recognition()
-                # プログラム自体は継続させる（次の認識のため）
+                    logger.info("キーボード割り込みにより認識処理をキャンセルしました")
+                    print("\n認識処理をキャンセルしました。")
+                    # 停止処理が完了するまで少し待つ
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.info("キーボード割り込みによりプログラムを終了します")
+                    print("\nプログラムを終了します。")
+                    break
             except asyncio.CancelledError:
                 logger.info("非同期処理がキャンセルされました")
-                print(
-                    "\n非同期処理がキャンセルされました。"
-                )  # ユーザーへの表示として残す
+                print("\n非同期処理がキャンセルされました。")
                 break
             except Exception as e:
                 log_exception(e, "楽曲認識中に予期せぬエラーが発生しました")
                 # ユーザーへのエラー表示
                 print(f"\n楽曲認識中にエラーが発生しました: {type(e).__name__} - {e}")
-                # 致命的でないエラーの場合は続行
-                await asyncio.sleep(1)  # 少し待機して再試行
+                logger.info("プログラムを終了します")
+                print("\nプログラムを終了します。")
+                break
 
     except KeyboardInterrupt:
         logger.info("キーボード割り込みによりプログラムを終了します")
-        print("\nプログラムを終了します。")  # ユーザーへの表示として残す
+        print("\nプログラムを終了します。")
     except Exception as e:
         log_exception(e, "メイン処理中に重大なエラーが発生しました")
-        print(
-            f"\nエラーが発生しました: {type(e).__name__} - {e}"
-        )  # ユーザーへの表示として残す
+        print(f"\nエラーが発生しました: {type(e).__name__} - {e}")
         return 1  # エラーコードを返す
     finally:
         # 確実にリソースを解放
@@ -172,6 +174,10 @@ if __name__ == "__main__":
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 exit_code = new_loop.run_until_complete(run_app())
+            except KeyboardInterrupt:
+                logger.info("新しいループ実行中にプログラムが中断されました")
+                print("\nプログラムが中断されました。")
+                exit_code = 0
             except Exception as e2:
                 log_exception(e2, "新しいイベントループでもエラーが発生しました")
                 print(f"新しいイベントループでもエラーが発生しました: {e2}")
