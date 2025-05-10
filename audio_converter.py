@@ -3,6 +3,7 @@ import io
 from typing import Optional
 
 from pydub import AudioSegment
+from pydub.exceptions import CouldntDecodeError
 
 """
 音声フォーマット変換ユーティリティモジュール。
@@ -12,7 +13,7 @@ from pydub import AudioSegment
 
 def convert_pcm_to_wav_bytes(
     pcm_data: bytes, channels: int, rate: int, sample_width: int
-) -> bytes:
+) -> Optional[bytes]:
     """
     生のPCM音声データ（バイト列）をWAVフォーマットのバイト列（ヘッダ付き）に変換します。
 
@@ -23,10 +24,11 @@ def convert_pcm_to_wav_bytes(
         sample_width: サンプルあたりのバイト数
 
     Returns:
-        bytes: WAVフォーマットに変換されたバイト列データ。変換失敗時は空のバイト列
+        Optional[bytes]: WAVフォーマットに変換されたバイト列データ。変換失敗時はNone
     """
     if not pcm_data:
-        return b""
+        return None
+
     wav_buffer: io.BytesIO = io.BytesIO()
     try:
         with wave.open(wav_buffer, "wb") as wf:
@@ -35,14 +37,27 @@ def convert_pcm_to_wav_bytes(
             wf.setframerate(rate)
             wf.writeframes(pcm_data)
         return wav_buffer.getvalue()
+    except wave.Error as e:
+        print(f"WAVフォーマットへの変換中にエラー発生: {e}")
+        return None
+    except OSError as e:
+        print(f"WAVファイル書き込み中にI/Oエラー発生: {e}")
+        return None
+    except ValueError as e:
+        print(f"不正なパラメータ - PCMからWAVへの変換中にエラー: {e}")
+        return None
     except Exception as e:
-        print(f"PCMからWAVへの変換中にエラーが発生しました: {e}")
-        return b""
+        print(
+            f"PCMからWAVへの変換中に予期せぬエラーが発生しました: {type(e).__name__} - {e}"
+        )
+        return None
     finally:
         wav_buffer.close()
 
 
-def convert_wav_to_ogg_bytes(wav_data: bytes, sample_rate: int, channels: int) -> bytes:
+def convert_wav_to_ogg_bytes(
+    wav_data: bytes, sample_rate: int, channels: int
+) -> Optional[bytes]:
     """
     WAV形式のバイト列をogg形式のバイト列に変換します。
 
@@ -52,17 +67,30 @@ def convert_wav_to_ogg_bytes(wav_data: bytes, sample_rate: int, channels: int) -
         channels: チャンネル数
 
     Returns:
-        bytes: OGG形式に変換されたバイト列データ。変換失敗時は空のバイト列
+        Optional[bytes]: OGG形式に変換されたバイト列データ。変換失敗時はNone
     """
     if not wav_data:
-        return b""
+        return None
+
     ogg_buffer: io.BytesIO = io.BytesIO()
+    wav_io: Optional[io.BytesIO] = None
+
     try:
-        audio_segment: AudioSegment = AudioSegment.from_wav(io.BytesIO(wav_data))
-        audio_segment.export(ogg_buffer, format="ogg")
-        return ogg_buffer.getvalue()
-    except Exception as e:
-        print(f"WAVからOGGへの変換中にエラーが発生しました: {e}")
-        return b""
+        wav_io = io.BytesIO(wav_data)
+        try:
+            audio_segment: AudioSegment = AudioSegment.from_wav(wav_io)
+            audio_segment.export(ogg_buffer, format="ogg")
+            return ogg_buffer.getvalue()
+        except CouldntDecodeError as e:
+            print(f"WAVデータのデコードエラー: {e}")
+            return None
+        except OSError as e:
+            print(f"OGGエクスポート中にI/Oエラー発生: {e}")
+            return None
+        except Exception as e:
+            print(f"WAVからOGGへの変換中に予期せぬエラー: {type(e).__name__} - {e}")
+            return None
     finally:
+        if wav_io:
+            wav_io.close()
         ogg_buffer.close()
