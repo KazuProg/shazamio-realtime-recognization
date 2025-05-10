@@ -2,6 +2,7 @@ import collections
 import pyaudio
 import threading
 import time
+from typing import Deque, Optional, List
 
 
 class AudioRecorder:
@@ -27,22 +28,22 @@ class AudioRecorder:
             chunk_size: 一度に処理する音声データのサイズ
             buffer_seconds: バッファに保持する音声の最大秒数
         """
-        self.audio_format = audio_format
-        self.channels = channels
-        self.rate = rate
-        self.chunk_size = chunk_size
-        self.sample_width = pyaudio.get_sample_size(self.audio_format)
+        self.audio_format: int = audio_format
+        self.channels: int = channels
+        self.rate: int = rate
+        self.chunk_size: int = chunk_size
+        self.sample_width: int = pyaudio.get_sample_size(self.audio_format)
 
-        self.buffer_max_chunks = int(self.rate / self.chunk_size * buffer_seconds)
-        self.audio_buffer = collections.deque(maxlen=self.buffer_max_chunks)
+        self.buffer_max_chunks: int = int(self.rate / self.chunk_size * buffer_seconds)
+        self.audio_buffer: Deque[bytes] = collections.deque(maxlen=self.buffer_max_chunks)
 
-        self._audio_interface = None
-        self._audio_stream = None
-        self._recording_thread = None
-        self._is_recording = False
-        self._lock = threading.Lock()
+        self._audio_interface: Optional[pyaudio.PyAudio] = None
+        self._audio_stream: Optional[pyaudio.Stream] = None
+        self._recording_thread: Optional[threading.Thread] = None
+        self._is_recording: bool = False
+        self._lock: threading.Lock = threading.Lock()
 
-    def _open_stream(self):
+    def _open_stream(self) -> None:
         """
         音声入力ストリームを開きます。
         """
@@ -55,7 +56,7 @@ class AudioRecorder:
             frames_per_buffer=self.chunk_size,
         )
 
-    def _close_stream(self):
+    def _close_stream(self) -> None:
         """
         音声入力ストリームを閉じ、リソースを解放します。
         """
@@ -68,7 +69,7 @@ class AudioRecorder:
             self._audio_interface = None
         self.audio_buffer.clear()
 
-    def _record_loop(self):
+    def _record_loop(self) -> None:
         """
         音声データを継続的に読み込み、バッファに格納するループ。
         """
@@ -77,7 +78,7 @@ class AudioRecorder:
             print("録音スレッド開始。")
             while self._is_recording:
                 try:
-                    data = self._audio_stream.read(
+                    data: bytes = self._audio_stream.read(
                         self.chunk_size, exception_on_overflow=False
                     )
                     with self._lock:
@@ -100,7 +101,7 @@ class AudioRecorder:
             self._close_stream()
             print("録音スレッド終了。")
 
-    def start(self):
+    def start(self) -> None:
         """
         録音を開始します。別スレッドで音声キャプチャを実行します。
         """
@@ -114,7 +115,7 @@ class AudioRecorder:
         self._recording_thread.start()
         print("録音を開始しました。")
 
-    def stop(self):
+    def stop(self) -> None:
         """
         録音を停止します。録音スレッドを終了し、音声ストリームを閉じます。
         """
@@ -154,14 +155,14 @@ class AudioRecorder:
             print("録音データがありません。")
             return b""
 
-        num_chunks_to_get = int(self.rate / self.chunk_size * duration_seconds)
+        num_chunks_to_get: int = int(self.rate / self.chunk_size * duration_seconds)
         with self._lock:
             # バッファのコピーを作成して操作（イテレーション中の変更を避けるため）
-            current_buffer_list = list(self.audio_buffer)
+            current_buffer_list: List[bytes] = list(self.audio_buffer)
 
         if not current_buffer_list:
             return b""
 
         # 必要なチャンク数、またはバッファにある全チャンク数のうち少ない方
-        chunks_to_retrieve = current_buffer_list[-num_chunks_to_get:]
+        chunks_to_retrieve: List[bytes] = current_buffer_list[-num_chunks_to_get:]
         return b"".join(chunks_to_retrieve)

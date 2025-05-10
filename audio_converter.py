@@ -1,5 +1,6 @@
 import wave
 import io
+from typing import Optional
 
 from pydub import AudioSegment
 
@@ -26,7 +27,7 @@ def convert_pcm_to_wav_bytes(
     """
     if not pcm_data:
         return b""
-    wav_buffer = io.BytesIO()
+    wav_buffer: io.BytesIO = io.BytesIO()
     try:
         with wave.open(wav_buffer, "wb") as wf:
             wf.setnchannels(channels)
@@ -55,9 +56,9 @@ def convert_wav_to_ogg_bytes(wav_data: bytes, sample_rate: int, channels: int) -
     """
     if not wav_data:
         return b""
-    ogg_buffer = io.BytesIO()
+    ogg_buffer: io.BytesIO = io.BytesIO()
     try:
-        audio_segment = AudioSegment.from_wav(io.BytesIO(wav_data))
+        audio_segment: AudioSegment = AudioSegment.from_wav(io.BytesIO(wav_data))
         audio_segment.export(ogg_buffer, format="ogg")
         return ogg_buffer.getvalue()
     except Exception as e:
