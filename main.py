@@ -2,13 +2,25 @@ import asyncio
 import os
 import sys
 import logging
-from typing import Dict, Any, Optional
+import signal
+from typing import (
+    Dict,
+    Any,
+    Optional,
+    Final,
+    NoReturn,
+)
 
 from shazam_realtime_recognizer import ShazamRealtimeRecognizer
 from logger_config import setup_logger, log_exception
 
 # このモジュール用のロガーを設定
 logger = setup_logger(logger_name="main", log_level=logging.INFO)
+
+# 定数定義
+MAX_RECOGNITION_ATTEMPTS: Final[int] = 3  # 認識試行の最大回数
+EXIT_SUCCESS: Final[int] = 0  # 正常終了コード
+EXIT_ERROR: Final[int] = 1  # エラー終了コード
 
 
 def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
@@ -19,8 +31,10 @@ def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
             print("認識できませんでした。")  # ユーザーへの表示として残す
             return
 
-        title: str = result.get("track", {}).get("title", "タイトル不明")
-        artist: str = result.get("track", {}).get("subtitle", "アーティスト不明")
+        # 結果から情報を抽出
+        track_info = result.get("track", {})
+        title: str = track_info.get("title", "タイトル不明")
+        artist: str = track_info.get("subtitle", "アーティスト不明")
 
         # 認識結果をログに記録
         logger.info(f"認識結果: {title} / {artist}")
@@ -28,6 +42,7 @@ def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
         # ユーザーへの表示
         clear_console()
         print(f"\n  {title} / {artist}\n")
+
     except Exception as e:
         log_exception(e, "認識結果の処理中にエラーが発生しました")
 
@@ -39,7 +54,11 @@ async def main() -> int:
     Returns:
         int: 終了コード。正常終了は0、エラー終了は1
     """
-    recognizer = None
+    # シグナルハンドラの設定
+    setup_signal_handlers()
+
+    recognizer: Optional[ShazamRealtimeRecognizer] = None
+
     try:
         logger.info("ShazamRealtimeRecognizerを初期化しています...")
         recognizer = ShazamRealtimeRecognizer(
@@ -48,6 +67,7 @@ async def main() -> int:
         )
         logger.info("初期化完了。認識準備完了。")
 
+        # メインループ
         while True:
             try:
                 # このメッセージはユーザーのためのものなのでprint()を使用
@@ -56,16 +76,19 @@ async def main() -> int:
                 )
                 input()
 
+                # 開始前の確認
                 logger.info("楽曲認識を開始します...")
+
+                # 認識開始
                 await recognizer.start_recognition()
 
                 # 認識処理が完了するまで待機
-                while recognizer._is_recognizing:
-                    await asyncio.sleep(0.1)
+                await wait_for_recognition_complete(recognizer)
 
                 logger.info("楽曲認識が完了しました")
 
             except KeyboardInterrupt:
+                # 録音中なら停止
                 if recognizer and recognizer._is_recognizing:
                     recognizer.stop_recognition()
                     logger.info("キーボード割り込みにより認識処理をキャンセルしました")
@@ -94,18 +117,83 @@ async def main() -> int:
     except Exception as e:
         log_exception(e, "メイン処理中に重大なエラーが発生しました")
         print(f"\nエラーが発生しました: {type(e).__name__} - {e}")
-        return 1  # エラーコードを返す
+        return EXIT_ERROR
     finally:
         # 確実にリソースを解放
-        if recognizer and recognizer._is_recognizing:
+        await cleanup_resources(recognizer)
+
+    logger.info("プログラムが正常に終了しました")
+    return EXIT_SUCCESS
+
+
+async def wait_for_recognition_complete(recognizer: ShazamRealtimeRecognizer) -> None:
+    """
+    認識処理が完了するまで待機します。
+
+    Args:
+        recognizer: 楽曲認識インスタンス
+    """
+    retry_count = 0
+    retry_limit = 3
+    retry_interval = 0.1  # 秒
+
+    while recognizer._is_recognizing:
+        try:
+            await asyncio.sleep(retry_interval)
+        except asyncio.CancelledError:
+            logger.warning("認識待機中に処理がキャンセルされました")
+            break
+        except Exception as e:
+            log_exception(e, "認識待機中にエラーが発生しました")
+            retry_count += 1
+            if retry_count >= retry_limit:
+                logger.error(f"{retry_limit}回のエラーが発生したため待機を中断します")
+                break
+
+
+async def cleanup_resources(recognizer: Optional[ShazamRealtimeRecognizer]) -> None:
+    """
+    プログラム終了時にリソースを解放します。
+
+    Args:
+        recognizer: 楽曲認識インスタンス
+    """
+    if recognizer and recognizer._is_recognizing:
+        try:
             logger.info("録音認識を停止しています...")
             recognizer.stop_recognition()
             # 停止処理が完了するまで少し待つ
             await asyncio.sleep(0.5)
             logger.info("録音認識を停止しました")
+        except Exception as e:
+            log_exception(e, "リソース解放中にエラーが発生しました")
 
-    logger.info("プログラムが正常に終了しました")
-    return 0  # 正常終了
+
+def setup_signal_handlers() -> None:
+    """
+    シグナルハンドラを設定します。Windows/Unix両対応。
+    """
+    # Windowsではシグナルの種類が限られるため、対応を分ける
+    try:
+        # SIGTERM: プロセス終了リクエスト (Unix/Linux)
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, lambda sig, frame: handle_termination())
+
+        # SIGINT: キーボード割り込み (Ctrl+C) - 全プラットフォーム
+        signal.signal(signal.SIGINT, lambda sig, frame: handle_termination())
+
+        logger.debug("シグナルハンドラを設定しました")
+    except Exception as e:
+        log_exception(e, "シグナルハンドラの設定に失敗しました")
+
+
+def handle_termination() -> NoReturn:
+    """
+    終了シグナル受信時の処理。
+    """
+    logger.info("終了シグナルを受信しました")
+    print("\n終了シグナルを受信しました。プログラムを終了します。")
+    sys.exit(0)
 
 
 def clear_console() -> None:
@@ -144,11 +232,17 @@ async def run_app() -> int:
         return await main()
     except Exception as e:
         log_exception(e, "アプリケーション実行中に回復不能なエラーが発生しました")
-        return 1
+        return EXIT_ERROR
 
 
-if __name__ == "__main__":
-    exit_code = 0
+def run_with_event_loop() -> int:
+    """
+    イベントループを作成し、アプリケーションを実行します。
+
+    Returns:
+        int: 終了コード
+    """
+    exit_code = EXIT_SUCCESS
     loop = None
 
     try:
@@ -163,6 +257,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("プログラムが中断されました")
         print("\nプログラムが中断されました。")
+        exit_code = EXIT_SUCCESS  # キーボード割り込みによる終了は正常終了として扱う
     except RuntimeError as e:
         # イベントループに関するエラー処理
         if "Event loop is closed" in str(e) and isinstance(e, RuntimeError):
@@ -170,54 +265,85 @@ if __name__ == "__main__":
                 "イベントループが既に閉じられています。新しいループで再試行します"
             )
             print("イベントループが既に閉じられています。新しいループで再試行します。")
-            try:
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                exit_code = new_loop.run_until_complete(run_app())
-            except KeyboardInterrupt:
-                logger.info("新しいループ実行中にプログラムが中断されました")
-                print("\nプログラムが中断されました。")
-                exit_code = 0
-            except Exception as e2:
-                log_exception(e2, "新しいイベントループでもエラーが発生しました")
-                print(f"新しいイベントループでもエラーが発生しました: {e2}")
-                exit_code = 1
-            finally:
-                # 新しいループのクリーンアップ
-                try:
-                    if new_loop.is_running():
-                        new_loop.stop()
-                    new_loop.close()
-                except Exception:
-                    pass
+
+            # 新しいループで再試行
+            exit_code = retry_with_new_loop()
         else:
             log_exception(e, "ランタイムエラーが発生しました")
             print(f"ランタイムエラーが発生しました: {e}")
-            exit_code = 1
+            exit_code = EXIT_ERROR
     except Exception as e:
         log_exception(e, "予期せぬエラーが発生しました")
         print(f"予期せぬエラーが発生しました: {type(e).__name__} - {e}")
-        exit_code = 1
+        exit_code = EXIT_ERROR
     finally:
         # メインループのクリーンアップ
         if loop:
             try:
-                if loop.is_running():
-                    loop.stop()
-                # 未完了のタスクをキャンセル
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-                # すべてのタスクが完了するのを待つ
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
-                loop.close()
+                # ループのクリーンアップ
+                cleanup_event_loop(loop)
                 logger.debug("イベントループをクリーンアップしました")
             except Exception as e:
                 log_exception(e, "ループのクリーンアップ中にエラーが発生しました")
 
         logger.info(f"プログラムを終了します（終了コード: {exit_code}）")
-        # 終了コードを設定
-        sys.exit(exit_code)
+
+    return exit_code
+
+
+def retry_with_new_loop() -> int:
+    """
+    新しいイベントループでアプリケーションを再試行します。
+
+    Returns:
+        int: 終了コード
+    """
+    new_loop = None
+    try:
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        return new_loop.run_until_complete(run_app())
+    except KeyboardInterrupt:
+        logger.info("新しいループ実行中にプログラムが中断されました")
+        print("\nプログラムが中断されました。")
+        return EXIT_SUCCESS
+    except Exception as e2:
+        log_exception(e2, "新しいイベントループでもエラーが発生しました")
+        print(f"新しいイベントループでもエラーが発生しました: {e2}")
+        return EXIT_ERROR
+    finally:
+        # 新しいループのクリーンアップ
+        if new_loop:
+            cleanup_event_loop(new_loop)
+
+
+def cleanup_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """
+    イベントループをクリーンアップします。
+
+    Args:
+        loop: クリーンアップするイベントループ
+    """
+    try:
+        if loop.is_running():
+            loop.stop()
+
+        # 未完了のタスクをキャンセル
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+
+        # すべてのタスクが完了するのを待つ
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+        # ループを閉じる
+        loop.close()
+    except Exception:
+        # クリーンアップ中のエラーは無視
+        pass
+
+
+if __name__ == "__main__":
+    # アプリケーションを実行し、終了コードを設定
+    sys.exit(run_with_event_loop())
