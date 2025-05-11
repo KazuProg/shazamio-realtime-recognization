@@ -1,0 +1,11 @@
+[project]
+name = "shazamio-realtime-recognize"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "audioop-lts>=0.2.1",
+    "pyaudio>=0.2.14",
+    "shazamio>=0.8.0",
+]
