@@ -3,6 +3,8 @@ import os
 import sys
 import logging
 import signal
+import webbrowser
+import requests
 from typing import (
     Dict,
     Any,
@@ -10,6 +12,9 @@ from typing import (
     Final,
     NoReturn,
 )
+import dotenv
+
+dotenv.load_dotenv()
 
 from shazam_realtime_recognizer import ShazamRealtimeRecognizer
 from logger_config import setup_logger, log_exception
@@ -21,6 +26,107 @@ logger = setup_logger(logger_name="main", log_level=logging.INFO)
 MAX_RECOGNITION_ATTEMPTS: Final[int] = 3  # 認識試行の最大回数
 EXIT_SUCCESS: Final[int] = 0  # 正常終了コード
 EXIT_ERROR: Final[int] = 1  # エラー終了コード
+YOUTUBE_API_KEY: Final[str] = os.environ.get("YOUTUBE_API_KEY", "")  # YouTube Data API キー
+
+def search_youtube(query: str) -> Optional[str]:
+    """
+    YouTube Data APIを使用して検索クエリに基づいて動画を検索し、
+    最初の検索結果の動画IDを返します。
+
+    Args:
+        query: 検索クエリ文字列
+
+    Returns:
+        Optional[str]: 見つかった場合は動画ID、見つからない場合はNone
+    """
+    try:
+        if not YOUTUBE_API_KEY:
+            logger.error("YouTube API キーが設定されていません。環境変数 YOUTUBE_API_KEY を設定してください。")
+            print("YouTube API キーが設定されていません。環境変数 YOUTUBE_API_KEY を設定してください。")
+            return None
+
+        # YouTube Data API v3 検索エンドポイント
+        url = "https://www.googleapis.com/youtube/v3/search"
+        
+        # パラメータ設定
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": 1,
+            "key": YOUTUBE_API_KEY
+        }
+        
+        print(f"API リクエスト実行: URL={url}, クエリ={query}")
+        
+        # リクエスト実行
+        response = requests.get(url, params=params)
+        
+        # レスポンスの詳細をログと画面に出力
+        print(f"APIレスポンスステータス: {response.status_code}")
+        logger.info(f"APIレスポンスステータス: {response.status_code}")
+        
+        # エラー時はレスポンス本文も出力
+        if response.status_code != 200:
+            error_text = response.text
+            print(f"APIエラー詳細: {error_text}")
+            logger.error(f"APIエラー詳細: {error_text}")
+            response.raise_for_status()  # エラーを発生させる
+        
+        # レスポンス処理
+        data = response.json()
+        
+        # デバッグ用に結果の概要を出力
+        print(f"API結果: {len(data.get('items', []))}件の動画が見つかりました")
+        
+        # 検索結果がない場合
+        if not data.get("items"):
+            logger.info(f"「{query}」の検索結果が見つかりませんでした。")
+            print(f"「{query}」の検索結果が見つかりませんでした。")
+            return None
+            
+        # 最初の結果から動画IDを取得
+        video_id = data["items"][0]["id"]["videoId"]
+        print(f"見つかった動画ID: {video_id}")
+        return video_id
+        
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"YouTube API リクエスト中にHTTPエラーが発生しました: {e}"
+        log_exception(e, error_msg)
+        print(error_msg)
+    except requests.exceptions.RequestException as e:
+        error_msg = f"YouTube API リクエスト中にエラーが発生しました: {e}"
+        log_exception(e, error_msg)
+        print(error_msg)
+    except KeyError as e:
+        error_msg = f"YouTube APIレスポンスの解析中にエラーが発生しました: {e}"
+        log_exception(e, error_msg)
+        print(error_msg)
+    except Exception as e:
+        error_msg = f"YouTube検索中に予期せぬエラーが発生しました: {e}"
+        log_exception(e, error_msg)
+        print(error_msg)
+    
+    return None
+
+
+def open_youtube_video(video_id: str) -> bool:
+    """
+    指定されたYouTube動画IDのURLをデフォルトブラウザで開きます。
+
+    Args:
+        video_id: YouTube動画ID
+
+    Returns:
+        bool: 成功した場合はTrue、失敗した場合はFalse
+    """
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        logger.info(f"YouTubeビデオを開きます: {url}")
+        return webbrowser.open(url)
+    except Exception as e:
+        log_exception(e, "ブラウザでYouTube動画を開く際にエラーが発生しました")
+        return False
 
 
 def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
@@ -42,6 +148,22 @@ def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
         # ユーザーへの表示
         clear_console()
         print(f"\n  {title} / {artist}\n")
+
+        # YouTube検索クエリを作成
+        search_query = f"{title} {artist} official"
+        print(f"YouTubeで検索中: {search_query}")
+        
+        # YouTube検索を実行
+        video_id = search_youtube(search_query)
+        
+        if video_id:
+            # YouTube動画を開く
+            if open_youtube_video(video_id):
+                print(f"YouTubeで動画を開きました: https://www.youtube.com/watch?v={video_id}")
+            else:
+                print("YouTubeで動画を開けませんでした。")
+        else:
+            print("YouTubeで関連動画が見つかりませんでした。")
 
     except Exception as e:
         log_exception(e, "認識結果の処理中にエラーが発生しました")
