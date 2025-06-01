@@ -5,14 +5,23 @@ import logging
 import signal
 import webbrowser
 import requests
+import dotenv
 from typing import (
     Dict,
     Any,
     Optional,
     Final,
     NoReturn,
+    Literal,
 )
-import dotenv
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import WebDriverException
 
 dotenv.load_dotenv()
 
@@ -27,6 +36,12 @@ MAX_RECOGNITION_ATTEMPTS: Final[int] = 3  # 認識試行の最大回数
 EXIT_SUCCESS: Final[int] = 0  # 正常終了コード
 EXIT_ERROR: Final[int] = 1  # エラー終了コード
 YOUTUBE_API_KEY: Final[str] = os.environ.get("YOUTUBE_API_KEY", "")  # YouTube Data API キー
+
+# Seleniumドライバーをグローバル変数として保持
+_chrome_driver: Optional[webdriver.Chrome] = None
+
+# 認識開始時間を記録するグローバル変数
+_recognition_start_time: Optional[float] = None
 
 def search_youtube(query: str) -> Optional[str]:
     """
@@ -110,32 +125,153 @@ def search_youtube(query: str) -> Optional[str]:
     return None
 
 
-def open_youtube_video(video_id: str) -> bool:
+def open_youtube_video(video_id: str, method: Literal["browser", "selenium"] = "browser", 
+                      target_url: Optional[str] = None, 
+                      input_selector: Optional[str] = None) -> bool:
     """
-    指定されたYouTube動画IDのURLをデフォルトブラウザで開きます。
+    指定されたYouTube動画IDを利用してブラウザで表示します。
+    
+    method="browser": 通常のブラウザでYouTubeを開く
+    method="selenium": Seleniumを使用して指定URLのinput要素に動画IDを入力
 
     Args:
         video_id: YouTube動画ID
+        method: 開く方法（"browser"または"selenium"）
+        target_url: seleniumモードで開くURL
+        input_selector: input要素のCSS/XPathセレクタ
 
     Returns:
         bool: 成功した場合はTrue、失敗した場合はFalse
     """
+    global _chrome_driver
+    
     try:
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        logger.info(f"YouTubeビデオを開きます: {url}")
-        return webbrowser.open(url)
+        if method == "browser":
+            # 通常のブラウザでYouTubeを開く
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"YouTubeビデオを開きます: {url}")
+            return webbrowser.open(url)
+        
+        elif method == "selenium":
+            # seleniumを使用して特定のページのinput要素に入力
+            if not target_url or not input_selector:
+                logger.error("Seleniumモードではtarget_urlとinput_selectorが必要です")
+                print("SeleniumモードではターゲットURLとinput要素のセレクタが必要です")
+                return False
+            
+            # ドライバーがまだ初期化されていないか、既に閉じられている場合は新しく作成
+            driver_needs_init = False
+            
+            if _chrome_driver is None:
+                driver_needs_init = True
+            else:
+                # ドライバーが生きているか確認
+                try:
+                    # 簡単な操作を試して生きているか確認
+                    _chrome_driver.current_url
+                except (WebDriverException, Exception) as e:
+                    logger.info(f"既存のブラウザセッションが終了しています。新しく開始します: {e}")
+                    driver_needs_init = True
+                    # 古いドライバーが残っている場合はクリーンアップ
+                    try:
+                        if _chrome_driver:
+                            _chrome_driver.quit()
+                    except:
+                        pass
+                    _chrome_driver = None
+            
+            if driver_needs_init:
+                logger.info(f"新しいChromeセッションを開始します: {target_url}")
+                print(f"Chromeを起動して {target_url} を開きます...")
+                
+                # Chromeオプション設定
+                chrome_options = Options()
+                # 以下の行をコメント解除するとヘッドレスモードになります
+                # chrome_options.add_argument("--headless")
+                
+                # WebDriverの初期化
+                _chrome_driver = webdriver.Chrome(options=chrome_options)
+                _chrome_driver.get(target_url)
+                print(f"新しいブラウザでページを読み込みました: {target_url}")
+            else:
+                # 既存のドライバーを使用、必要に応じてURLを更新
+                current_url = _chrome_driver.current_url
+                if current_url != target_url:
+                    logger.info(f"既存のブラウザで新しいURLに移動します: {target_url}")
+                    print(f"既存のブラウザで新しいURLに移動します: {target_url}")
+                    _chrome_driver.get(target_url)
+                else:
+                    logger.info(f"既存のブラウザでinput要素を更新します: {input_selector}")
+                    print(f"既存のブラウザでinput要素を更新します")
+            
+            try:
+                # input要素が見つかるまで待機（最大10秒）
+                wait = WebDriverWait(_chrome_driver, 10)
+                input_element = wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, input_selector))
+                )
+                load_button = wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".load button"))
+                )
+                
+                # 入力欄をクリアして動画IDを入力
+                input_element.clear()
+                input_element.send_keys(video_id)
+                print(f"入力フォームに動画ID ({video_id}) を入力しました")
+                
+                load_button.click()
+
+                # ブラウザは開いたままにし、制御を返す（待機しない）
+                print("Chromeブラウザは開いたままになっています。続行するには再度Enterを押してください。")
+                
+                # ブラウザクローズのロジックは削除し、すぐに制御を返す
+                return True
+                
+            except Exception as e:
+                logger.error(f"Selenium操作中にエラーが発生しました: {e}")
+                print(f"ブラウザ操作中にエラーが発生しました: {e}")
+                # エラー時のみドライバーをクリーンアップし、グローバル変数をリセット
+                if _chrome_driver:
+                    _chrome_driver.quit()
+                    _chrome_driver = None
+                return False
+        
+        else:
+            logger.error(f"未対応のメソッドが指定されました: {method}")
+            print(f"未対応の開き方が指定されました: {method}")
+            return False
+            
     except Exception as e:
-        log_exception(e, "ブラウザでYouTube動画を開く際にエラーが発生しました")
+        log_exception(e, "動画を開く際にエラーが発生しました")
+        print(f"動画を開く際にエラーが発生しました: {e}")
+        # 重大なエラー時はドライバーをリセット
+        if method == "selenium" and _chrome_driver:
+            try:
+                _chrome_driver.quit()
+            except:
+                pass
+            _chrome_driver = None
         return False
 
 
 def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
     """認識結果を処理するコールバック関数です。"""
+    global _recognition_start_time
+    
+    recognition_succeeded = False  # 認識成功フラグ
+    
     try:
+        logger.info(f"認識コールバック開始時点での_recognition_start_time: {_recognition_start_time}")
+        print(f"コールバック時の認識開始時間: {_recognition_start_time}")
+        
         if result is None:
             logger.info("認識できませんでした。")
             print("認識できませんでした。")  # ユーザーへの表示として残す
             return
+
+        recognition_succeeded = True  # 認識が成功した
+        
+        offset = int(result["matches"][0]["offset"])
 
         # 結果から情報を抽出
         track_info = result.get("track", {})
@@ -146,7 +282,7 @@ def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
         logger.info(f"認識結果: {title} / {artist}")
 
         # ユーザーへの表示
-        clear_console()
+        #clear_console()
         print(f"\n  {title} / {artist}\n")
 
         # YouTube検索クエリを作成
@@ -156,17 +292,113 @@ def recognition_callback(result: Optional[Dict[str, Any]]) -> None:
         # YouTube検索を実行
         video_id = search_youtube(search_query)
         
+        # フォーム入力直前に全体の経過時間を計算
+        total_elapsed_time = 0
+        if _recognition_start_time is not None:
+            total_elapsed_time = time.time() - _recognition_start_time
+            logger.info(f"認識開始からここまでの総経過時間: {total_elapsed_time:.2f}秒")
+            print(f"処理時間: {total_elapsed_time:.2f}秒")
+        else:
+            logger.warning("認識開始時間が記録されていません")
+            print("警告: 認識開始時間が記録されていません")
+        
+        # offsetに総経過時間を加算
+        offset += total_elapsed_time
+        
+        # 最終的なoffsetを小数点第1位まで保持
+        final_offset = round(offset, 2)
+        
+        logger.info(f"最終調整後のoffset: {final_offset}秒 (元のoffset + 処理時間{total_elapsed_time:.2f}秒 = {offset:.2f}秒を小数第1位まで)")
+        print(f"最終offset: {final_offset}秒")
+        
         if video_id:
-            # YouTube動画を開く
-            if open_youtube_video(video_id):
-                print(f"YouTubeで動画を開きました: https://www.youtube.com/watch?v={video_id}")
+            # 動画を開くメソッドを選択（browser/selenium）
+            # ★ 以下を環境に合わせて変更してください ★
+            # 例: method="selenium", target_url="https://example.com/form", input_selector="#videoIdInput"
+            method = "selenium"  # または "selenium"
+            target_url = "https://n100-ubuntu.kazuprog.work/youtube-vj/"  # seleniumモードで開くURL
+            input_selector = "#input-videoId"  # input要素のセレクタ
+            if open_youtube_video(f"{video_id}@{final_offset}", method, target_url, input_selector):
+                if method == "browser":
+                    print(f"YouTubeで動画を開きました: https://www.youtube.com/watch?v={video_id}")
+                else:
+                    print(f"Chrome で {target_url} を開き、入力フォームに動画ID ({video_id}@{final_offset}) を入力しました")
             else:
                 print("YouTubeで動画を開けませんでした。")
         else:
             print("YouTubeで関連動画が見つかりませんでした。")
 
+        # 処理が完了したら、3秒後に次の認識の準備を促すメッセージを表示
+        print("\n3秒後に次の認識の準備が整います...")
+        time.sleep(3)
+        print("\n楽曲認識を開始するにはEnterキーを押してください。Ctrl+Cで終了します。")
+
     except Exception as e:
         log_exception(e, "認識結果の処理中にエラーが発生しました")
+    finally:
+        # 認識が成功した場合のみ認識開始時間をリセット
+        if recognition_succeeded:
+            _recognition_start_time = None
+            logger.info("認識成功のため認識開始時間をリセットしました")
+
+
+def initialize_browser(target_url: str, input_selector: str) -> bool:
+    """
+    Seleniumブラウザを初期化します。プログラム起動時に呼び出されます。
+
+    Args:
+        target_url: 開くURLのアドレス
+        input_selector: 入力要素のCSSセレクタ
+
+    Returns:
+        bool: 初期化が成功したらTrue、失敗したらFalse
+    """
+    global _chrome_driver
+
+    if _chrome_driver is not None:
+        # 既にブラウザが初期化されている場合は何もしない
+        logger.info("ブラウザは既に初期化されています")
+        return True
+
+    try:
+        logger.info(f"プログラム起動時にChromeブラウザを初期化します: {target_url}")
+        print(f"Chromeブラウザを起動しています: {target_url}...")
+
+        # Chromeオプション設定
+        chrome_options = Options()
+        # 以下の行をコメント解除するとヘッドレスモードになります
+        # chrome_options.add_argument("--headless")
+
+        # WebDriverの初期化
+        _chrome_driver = webdriver.Chrome(options=chrome_options)
+        _chrome_driver.get(target_url)
+        
+        # input要素が存在するか確認（初期化の確認）
+        try:
+            wait = WebDriverWait(_chrome_driver, 10)
+            input_element = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, input_selector))
+            )
+            logger.info("ブラウザの初期化に成功しました")
+            print("ブラウザの初期化が完了しました。認識を開始するとフォームに動画IDが入力されます。")
+            return True
+        except Exception as e:
+            logger.error(f"ブラウザ初期化時に入力要素が見つかりませんでした: {e}")
+            print(f"ページの読み込みに問題があります: {e}")
+            _chrome_driver.quit()
+            _chrome_driver = None
+            return False
+            
+    except Exception as e:
+        logger.error(f"ブラウザの初期化に失敗しました: {e}")
+        print(f"ブラウザの初期化に失敗しました: {e}")
+        if _chrome_driver:
+            try:
+                _chrome_driver.quit()
+            except:
+                pass
+            _chrome_driver = None
+        return False
 
 
 async def main() -> int:
@@ -182,6 +414,17 @@ async def main() -> int:
     recognizer: Optional[ShazamRealtimeRecognizer] = None
 
     try:
+        # Seleniumブラウザの初期化（プログラム起動時）
+        # 認識コールバックで使用するのと同じURL・セレクタを使用
+        target_url = "https://n100-ubuntu.kazuprog.work/youtube-vj/"
+        input_selector = "#input-videoId"
+        browser_initialized = initialize_browser(target_url, input_selector)
+        
+        if not browser_initialized:
+            logger.warning("ブラウザの初期化に失敗しましたが、プログラムは続行します")
+            print("ブラウザの初期化に失敗しましたが、認識処理は使用可能です。")
+            # ブラウザ初期化失敗でもプログラムは継続（認識時に再試行される）
+
         logger.info("ShazamRealtimeRecognizerを初期化しています...")
         recognizer = ShazamRealtimeRecognizer(
             recognition_callback=recognition_callback,
@@ -201,6 +444,12 @@ async def main() -> int:
                 # 開始前の確認
                 logger.info("楽曲認識を開始します...")
 
+                # 認識開始時間を記録
+                global _recognition_start_time
+                _recognition_start_time = time.time()
+                logger.info(f"認識開始時間を記録しました: {_recognition_start_time}")
+                print(f"認識開始時間を記録: {_recognition_start_time}")
+
                 # 認識開始
                 await recognizer.start_recognition()
 
@@ -208,6 +457,10 @@ async def main() -> int:
                 await wait_for_recognition_complete(recognizer)
 
                 logger.info("楽曲認識が完了しました")
+
+                # 認識コールバックが実行されるまで少し待機
+                # この部分は認識コールバックの処理が非同期で実行される場合に必要
+                await asyncio.sleep(0.5)
 
             except KeyboardInterrupt:
                 # 録音中なら停止
@@ -289,6 +542,9 @@ async def cleanup_resources(recognizer: Optional[ShazamRealtimeRecognizer]) -> N
             logger.info("録音認識を停止しました")
         except Exception as e:
             log_exception(e, "リソース解放中にエラーが発生しました")
+    
+    # Seleniumリソースもクリーンアップ
+    cleanup_all_resources()
 
 
 def setup_signal_handlers() -> None:
@@ -315,6 +571,10 @@ def handle_termination() -> NoReturn:
     """
     logger.info("終了シグナルを受信しました")
     print("\n終了シグナルを受信しました。プログラムを終了します。")
+    
+    # すべてのリソースをクリーンアップ
+    cleanup_all_resources()
+    
     sys.exit(0)
 
 
@@ -466,6 +726,27 @@ def cleanup_event_loop(loop: asyncio.AbstractEventLoop) -> None:
         pass
 
 
+def cleanup_all_resources():
+    """
+    終了時にすべてのリソースを解放します。
+    """
+    global _chrome_driver
+    
+    if _chrome_driver:
+        try:
+            logger.info("Chromeブラウザを終了しています...")
+            _chrome_driver.quit()
+            logger.info("Chromeブラウザを終了しました")
+        except Exception as e:
+            log_exception(e, "Chromeブラウザの終了中にエラーが発生しました")
+        finally:
+            _chrome_driver = None
+
+
 if __name__ == "__main__":
-    # アプリケーションを実行し、終了コードを設定
-    sys.exit(run_with_event_loop())
+    try:
+        # アプリケーションを実行し、終了コードを設定
+        sys.exit(run_with_event_loop())
+    finally:
+        # 最終的なクリーンアップを確実に実行
+        cleanup_all_resources()
